@@ -1,5 +1,5 @@
 use ark_ec::PairingEngine;
-use ark_ff::bytes::ToBytes;
+use ark_ff::bytes::{FromBytes, ToBytes};
 use ark_serialize::*;
 use ark_std::{
     io::{self, Result as IoResult},
@@ -67,6 +67,23 @@ impl<E: PairingEngine> ToBytes for VerifyingKey<E> {
     }
 }
 
+impl<E: PairingEngine> VerifyingKey<E> {
+    /// read
+    pub fn read<R: Read>(mut reader: R, len: usize) -> Self {
+        let alpha_g1 = E::G1Affine::read(&mut reader).unwrap();
+        let beta_g2 = E::G2Affine::read(&mut reader).unwrap();
+        let gamma_g2 = E::G2Affine::read(&mut reader).unwrap();
+        let delta_g2 = E::G2Affine::read(&mut reader).unwrap();
+        let mut gamma_abc_g1 = Vec::new();
+        for _ in 0..len {
+            let abc = E::G1Affine::read(&mut reader).unwrap();
+            gamma_abc_g1.push(abc);
+        }
+
+        Self { alpha_g1, beta_g2, gamma_g2, delta_g2, gamma_abc_g1 }
+    }
+}
+
 impl<E: PairingEngine> Default for VerifyingKey<E> {
     fn default() -> Self {
         Self {
@@ -129,6 +146,23 @@ impl<E: PairingEngine> ToBytes for PreparedVerifyingKey<E> {
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
+/// proving key size
+#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct KeySize {
+    /// vk len
+    pub vk_len: usize,
+    /// a_query len
+    pub a_len: usize,
+    /// b_g1_query len
+    pub b_g1_len: usize,
+    /// b_g2_query len
+    pub b_g2_len: usize,
+    /// h_query len
+    pub h_len: usize,
+    /// l_query len
+    pub l_len: usize,
+}
+
 /// The prover key for for the Groth16 zkSNARK.
 #[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ProvingKey<E: PairingEngine> {
@@ -148,4 +182,81 @@ pub struct ProvingKey<E: PairingEngine> {
     pub h_query: Vec<E::G1Affine>,
     /// The elements `l_i * G` in `E::G1`.
     pub l_query: Vec<E::G1Affine>,
+}
+
+impl<E: PairingEngine> ToBytes for ProvingKey<E> {
+    fn write<W: Write>(&self, mut writer: W) -> IoResult<()> {
+        self.vk.write(&mut writer)?;
+        self.beta_g1.write(&mut writer)?;
+        self.delta_g1.write(&mut writer)?;
+        for q in &self.a_query {
+            q.write(&mut writer)?;
+        }
+        for q in &self.b_g1_query {
+            q.write(&mut writer)?;
+        }
+        for q in &self.b_g2_query {
+            q.write(&mut writer)?;
+        }
+        for q in &self.h_query {
+            q.write(&mut writer)?;
+        }
+        for q in &self.l_query {
+            q.write(&mut writer)?;
+        }
+        Ok(())
+    }
+}
+
+impl<E: PairingEngine> ProvingKey<E> {
+    /// read
+    pub fn read<R: Read>(mut reader: R, key_size: &KeySize) -> Self {
+        let vk = VerifyingKey::<E>::read(&mut reader, key_size.vk_len);
+        let beta_g1 = E::G1Affine::read(&mut reader).unwrap();
+        let delta_g1 = E::G1Affine::read(&mut reader).unwrap();
+        
+        let mut a_query = Vec::new();
+        for _ in 0..key_size.a_len {
+            let q = E::G1Affine::read(&mut reader).unwrap();
+            a_query.push(q);
+        }
+
+        let mut b_g1_query = Vec::new();
+        for _ in 0..key_size.b_g1_len {
+            let q = E::G1Affine::read(&mut reader).unwrap();
+            b_g1_query.push(q);
+        }
+
+        let mut b_g2_query = Vec::new();
+        for _ in 0..key_size.b_g2_len {
+            let q = E::G2Affine::read(&mut reader).unwrap();
+            b_g2_query.push(q);
+        }
+
+        let mut h_query = Vec::new();
+        for _ in 0..key_size.h_len {
+            let q = E::G1Affine::read(&mut reader).unwrap();
+            h_query.push(q);
+        }
+
+        let mut l_query = Vec::new();
+        for _ in 0..key_size.l_len {
+            let q = E::G1Affine::read(&mut reader).unwrap();
+            l_query.push(q);
+        }
+
+        Self { vk, beta_g1, delta_g1, a_query, b_g1_query, b_g2_query, h_query, l_query }
+    }
+    
+    /// size
+    pub fn size(&self) -> KeySize {
+        KeySize { 
+            vk_len: self.vk.gamma_abc_g1.len(), 
+            a_len: self.a_query.len(),
+            b_g1_len: self.b_g1_query.len(), 
+            b_g2_len: self.b_g2_query.len(), 
+            h_len: self.h_query.len(), 
+            l_len: self.l_query.len() 
+        }
+    }
 }
